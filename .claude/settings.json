@@ -1,0 +1,33 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://agentrouter.org/",
+    "ANTHROPIC_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_API_KEY":"sk-VRarLILnMXjxgAHxua52SF6JABZ66gZQcSI1EiAtjTCs8Iun",
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_USE_AUTH_TOKEN": "true"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(xargs ls -la)",
+      "Bash(xargs -I '{}' bash -c 'count=$\\(ls -1 {} 2>/dev/null | wc -l\\); echo \"{}: $count files\"')",
+      "Bash(chown -R 1000:1000 /root/nubmail/maildata/*@*/)",
+      "Bash(openssl s_client -connect localhost:993 -servername mails.nubcoders.com)",
+      "Bash(python3 -m py_compile scripts/fetch_emojis_pyrogram.py)",
+      "Bash(python3 -m py_compile media_extractor.py)",
+      "Bash(python3 -m py_compile /root/Userbot-deployer/plugins/userbot.py)",
+      "Bash(grep -n '\\\\$set.*save_com' /root/Userbot-deployer/plugins/userbot.py)",
+      "Bash(grep -n '\\\\$push.*white_listed\\\\|\\\\$pull.*white_listed\\\\|\\\\$set.*white_listed' /root/Userbot-deployer/plugins/userbot.py)",
+      "Bash(git checkout *)",
+      "Bash(grep -n '\\\\$push.*white_listed\\\\|\\\\$pull.*white_listed\\\\|\\\\$set.*white_listed\\\\|\\\\$push.*raid_users\\\\|\\\\$pull.*raid_users' /root/Userbot-deployer/plugins/userbot.py)",
+      "Bash(curl -s http://localhost:3000/api/auth/github/authorize?userId=test123)",
+      "Bash(netstat -tlnp)",
+      "Bash(python3 -m json.tool)",
+      "Bash(docker compose *)",
+      "Bash(pkill -f \"npm start\")",
+      "Bash(npm start *)",
+      "Bash(python3 -c \"import json,sys; envs=json.load\\(sys.stdin\\); [print\\(e\\) for e in envs]\")"
+    ]
+  },
+  "theme": "auto",
+  "effortLevel": "high"
+}
