@@ -1,5 +1,3 @@
 kurigram
 telethon
-pymongo
-certifi
 python-dotenv
