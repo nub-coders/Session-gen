@@ -1,0 +1,23 @@
+services:
+  session-gen-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: session-gen-bot
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    networks:
+      - web
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  web:
+    external: true
