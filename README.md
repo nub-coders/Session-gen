@@ -16,7 +16,6 @@ A secure Telegram bot that generates Pyrogram session strings for users. This bo
 - Python 3.8+
 - Telegram Bot Token
 - Telegram API ID and API Hash
-- MongoDB connection (optional, for user tracking)
 
 ## Installation
 
@@ -94,7 +93,6 @@ CHANNEL = "your_updates_channel"
 
 - `/start` - Show welcome message and bot information
 - `/gen` - Generate a new Pyrogram session string
-- `/reboot` - Restart the bot (admin only)
 
 ### Generating Session Strings
 
@@ -130,9 +128,6 @@ Session-gen/
 
 - **Pyrogram**: Telegram client library
 - **Telethon**: Alternative Telegram client
-- **Pillow**: Image processing
-- **PyMongo**: MongoDB driver
-- **FFmpeg**: Media processing
 - **And more**: See `requirements.txt` for complete list
 
 ## Docker Configuration

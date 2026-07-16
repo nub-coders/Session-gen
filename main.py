@@ -1,14 +1,8 @@
-import os
-import certifi
-import pymongo
 from telethon import TelegramClient, events, Button
 from pyrogram import Client
 from pyrogram.errors.exceptions.unauthorized_401 import SessionPasswordNeeded
 from pyrogram.errors.exceptions.bad_request_400 import PhoneCodeInvalid, PasswordHashInvalid
-from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI, ADMIN_IDS, GROUP, CHANNEL
-mongo_client = pymongo.MongoClient(MONGO_URI, tlsCAFile=certifi.where())
-db = mongo_client['session']
-collection = db["users"]
+from config import API_ID, API_HASH, BOT_TOKEN, GROUP, CHANNEL
 bot = TelegramClient(None, API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 
@@ -50,81 +44,61 @@ async def session_str(event):
 
             phone_number = phone_event.text.strip()
 
-            try:
-                client = Client(
-                    f"user_{sender}",
-                    api_id=API_ID,
-                    api_hash=API_HASH,
-                    in_memory=True
-                )
-                await client.connect()
-                sent_code = await client.send_code(phone_number)
-                phone_code_hash = sent_code.phone_code_hash
+            client = Client(
+                f"user_{sender}",
+                api_id=API_ID,
+                api_hash=API_HASH,
+                in_memory=True
+            )
+            await client.connect()
+            sent_code = await client.send_code(phone_number)
+            phone_code_hash = sent_code.phone_code_hash
 
-                await event.respond("🔢 Please enter the verification code sent to your Telegram account in spaces (e.g., 1 2 3 4 5)")
+            await event.respond("🔢 Please enter the verification code sent to your Telegram account in spaces (e.g., 1 2 3 4 5)")
 
-                for _ in range(5):  # Give user 5 attempts to enter correct code
-                    code_event = await conv.wait_event(events.NewMessage(from_users=sender, func=lambda x: x.is_private))
-                    if code_event.raw_text.startswith('/'):
-                        await client.disconnect()
-                        return
-
-                    code = code_event.text.replace(' ', '')
-
-                    try:
-                        await client.sign_in(phone_number, phone_code_hash, code)
-                        await send_session(event, client, bot_username)
-                        return
-
-                    except PhoneCodeInvalid:
-                        await event.respond("❌ Invalid code. Please try again.")
-                        continue
-                    except SessionPasswordNeeded:
-                        await event.respond("🔐 Please enter your 2FA password:")
-
-                        for _ in range(5):  # Give 5 attempts for 2FA
-                            pass_event = await conv.wait_event(events.NewMessage(from_users=sender, func=lambda x: x.is_private))
-                            if pass_event.raw_text.startswith('/'):
-                                await client.disconnect()
-                                return
-
-                            try:
-                                await client.check_password(pass_event.text.strip())
-                                await send_session(event, client, bot_username)
-                                return
-
-                            except PasswordHashInvalid:
-                                await event.respond("❌ Incorrect 2FA password. Please try again.")
-                                continue
-
-                        await event.respond("❌ Too many incorrect 2FA attempts. Please try again with /gen")
-                        return
-
-                await event.respond("❌ Too many incorrect code attempts. Please try again with /gen")
-
-            except Exception as e:
-                await event.respond(f"⚠️ An error occurred: {str(e)}")
-                if client:
+            for _ in range(5):  # Give user 5 attempts to enter correct code
+                code_event = await conv.wait_event(events.NewMessage(from_users=sender, func=lambda x: x.is_private))
+                if code_event.raw_text.startswith('/'):
                     await client.disconnect()
+                    return
+
+                code = code_event.text.replace(' ', '')
+
+                try:
+                    await client.sign_in(phone_number, phone_code_hash, code)
+                    await send_session(event, client, bot_username)
+                    return
+
+                except PhoneCodeInvalid:
+                    await event.respond("❌ Invalid code. Please try again.")
+                    continue
+                except SessionPasswordNeeded:
+                    await event.respond("🔐 Please enter your 2FA password:")
+
+                    for _ in range(5):  # Give 5 attempts for 2FA
+                        pass_event = await conv.wait_event(events.NewMessage(from_users=sender, func=lambda x: x.is_private))
+                        if pass_event.raw_text.startswith('/'):
+                            await client.disconnect()
+                            return
+
+                        try:
+                            await client.check_password(pass_event.text.strip())
+                            await send_session(event, client, bot_username)
+                            return
+
+                        except PasswordHashInvalid:
+                            await event.respond("❌ Incorrect 2FA password. Please try again.")
+                            continue
+
+                    await event.respond("❌ Too many incorrect 2FA attempts. Please try again with /gen")
+                    return
+
+            await event.respond("❌ Too many incorrect code attempts. Please try again with /gen")
 
     except Exception as e:
         await event.respond(f"⚠️ An error occurred: {str(e)}")
         if client:
             await client.disconnect()
-
-@bot.on(events.NewMessage(pattern='^/reboot$'))
-async def reboot_handler(event):
-    user_id = event.sender_id
-
-    # Check if the user is an admin by comparing their user ID with ADMIN_IDS from the environment
-    if not ADMIN_IDS:
-        await event.respond("No admins configured. Please contact the bot admin.")
-    elif user_id in ADMIN_IDS:
-        await event.respond("Admin command received. Stopping the bot...")
-        os.system(f"kill -9 {os.getpid()}")  # Raise a system exit exception to stop the entire code
-    else:
-        await event.respond("You are not authorized to use this command.")
-
 
 @bot.on(events.NewMessage(
     incoming=True,
@@ -132,13 +106,6 @@ async def reboot_handler(event):
     func=lambda x: x.is_private,
     pattern="/start"))
 async def start_handler(event):
-    sender = event.sender_id
-    # Save user data if not exists
-    user_data = collection.find_one({"user_id": sender})
-    if not user_data:
-        user_data = {"user_id": sender}
-        collection.replace_one({"user_id": sender}, user_data, upsert=True)
-    
     welcome_text = """
 🤖 **Welcome to Session String Generator Bot!**
 
