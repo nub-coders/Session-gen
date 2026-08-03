@@ -1,10 +1,11 @@
 # Session Generator Bot
 
-A secure Telegram bot that generates Pyrogram session strings for users. This bot helps users create session strings safely and securely for their Telegram accounts.
+A secure Telegram bot that generates **Pyrogram** and **Telethon** session strings for users. This bot helps users create session strings safely and securely for their Telegram accounts.
 
 ## Features
 
-- 🔐 **Secure Session Generation**: Safely generates Pyrogram session strings
+- 🔐 **Secure Session Generation**: Safely generates Pyrogram and Telethon session strings
+- 🧩 **Both Libraries**: Pick Pyrogram or Telethon with an inline button
 - 📱 **Phone Number Verification**: Supports international phone number format
 - 🔢 **2FA Support**: Handles two-factor authentication
 - ⚡ **Fast & Reliable**: Quick session string generation
@@ -92,16 +93,19 @@ CHANNEL = "your_updates_channel"
 ### Bot Commands
 
 - `/start` - Show welcome message and bot information
-- `/gen` - Generate a new Pyrogram session string
+- `/gen` - Generate a session string (choose Pyrogram or Telethon)
 
 ### Generating Session Strings
 
 1. Start a conversation with the bot
 2. Send `/gen` command
-3. Enter your phone number in international format (e.g., +1234567890)
-4. Enter the verification code sent to your Telegram
-5. If 2FA is enabled, enter your password
-6. Receive your session string
+3. Choose **Pyrogram** or **Telethon**
+4. Enter your phone number in international format (e.g., +1234567890)
+5. Enter the verification code sent to your Telegram
+6. If 2FA is enabled, enter your password
+7. Receive your session string
+
+Tap **❌ Cancel** at any step to abort the flow.
 
 ## Security Features
 
@@ -115,19 +119,19 @@ CHANNEL = "your_updates_channel"
 
 ```
 Session-gen/
-├── main.py              # Main bot application
+├── main.py              # Main bot application (kurigram/pyrogram, state-machine flow)
+├── flavors.py           # Pyrogram/Telethon adapters + error classes
 ├── config.py            # Configuration file
 ├── requirements.txt     # Python dependencies
 ├── admin.txt           # Admin user IDs
 ├── Dockerfile          # Docker configuration
-├── session.sh          # Shell script (if any)
 └── README.md           # This file
 ```
 
 ## Dependencies
 
-- **Pyrogram**: Telegram client library
-- **Telethon**: Alternative Telegram client
+- **Pyrogram (kurigram)**: Bot client and Pyrogram session generation
+- **Telethon**: Telethon session generation
 - **And more**: See `requirements.txt` for complete list
 
 ## Docker Configuration
@@ -162,10 +166,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Changelog
 
-- **v1.0.0**: Initial release with basic session generation
-- Added Docker support
-- Enhanced security features
-- Improved error handling
+- **v2.0.0**: Added Telethon session generation via /gen → inline button choice; state-machine flow (conversation-lite) replaces telethon's Conversation API; cancel button, code-expiry handling, client cleanup on every exit path; kurigram/pyrogram bot
+- **v1.0.0**: Initial release with Pyrogram session generation
 
 ---
 
