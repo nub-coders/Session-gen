@@ -54,8 +54,8 @@ pip install -r requirements.txt
 ```
 
 3. Configure your bot:
-   - Update `config.py` with your API credentials
-   - Add admin user IDs to `admin.txt` (one per line)
+   - Copy `.env.example` to `.env` and fill in your values
+   - Set `ADMIN_IDS` (comma-separated user IDs) in `.env` if needed
 
 4. Run the bot:
 ```bash
@@ -64,14 +64,15 @@ python main.py
 
 ## Configuration
 
-Edit `config.py` to set up your bot:
+Set up your environment variables in `.env`:
 
-```python
-API_ID = 'your_api_id'
-API_HASH = 'your_api_hash'
-BOT_TOKEN = 'your_bot_token'
-GROUP = "your_support_group"
-CHANNEL = "your_updates_channel"
+```env
+API_ID=your_api_id
+API_HASH=your_api_hash
+BOT_TOKEN=your_bot_token
+GROUP=your_support_group
+CHANNEL=your_updates_channel
+ADMIN_IDS=123456789,987654321
 ```
 
 ### Getting API Credentials
@@ -123,7 +124,7 @@ Session-gen/
 ├── flavors.py           # Pyrogram/Telethon adapters + error classes
 ├── config.py            # Configuration file
 ├── requirements.txt     # Python dependencies
-├── admin.txt           # Admin user IDs
+├── .env.example         # Example environment variables template
 ├── Dockerfile          # Docker configuration
 └── README.md           # This file
 ```
