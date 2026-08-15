@@ -1,5 +1,13 @@
-# Environment
+# Environment & Secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Telegram / Session files
+*.session
+*.session-journal
 
 # Python
 __pycache__/
@@ -7,3 +15,12 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# IDE & AI Tooling
+.claude/
+.vscode/
+.idea/
+
+# Logs & System
+*.log
+.DS_Store
