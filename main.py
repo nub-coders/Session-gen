@@ -218,7 +218,10 @@ async def start_handler(_, message: Message):
             [
                 InlineKeyboardButton("Support Group 💭", url="https://t.me/nub_coder_s"),
                 InlineKeyboardButton("Updates Channel 📢", url="https://t.me/nub_coders"),
-            ]
+            ],
+            [
+                InlineKeyboardButton("🤖 ᴏᴜʀ ʙᴏᴛs", url="https://t.me/+FbIuEWrOYlEwYzM1", style=S.PRIMARY),
+            ],
         ]),
         disable_web_page_preview=True,
     )
