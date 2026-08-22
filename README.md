@@ -4,12 +4,13 @@ A secure Telegram bot that generates **Pyrogram** and **Telethon** session strin
 
 ## Features
 
+- 🎨 **Kurigram Bot API 10.2 UI**: Native Rich Messages, HTML tables, collapsible `<details>`, styled buttons, and streaming drafts
 - 🔐 **Secure Session Generation**: Safely generates Pyrogram and Telethon session strings
-- 🧩 **Both Libraries**: Pick Pyrogram or Telethon with an inline button
+- 🧩 **Both Libraries**: Pick Pyrogram or Telethon with styled inline buttons
 - 📱 **Phone Number Verification**: Supports international phone number format
-- 🔢 **2FA Support**: Handles two-factor authentication
-- ⚡ **Fast & Reliable**: Quick session string generation
-- 🛡️ **Privacy Focused**: Keeps user data secure
+- 🔢 **2FA Support**: Handles two-factor authentication with in-memory security
+- ⚡ **Fast & Reliable**: Live streaming draft updates during authorization
+- 🛡️ **Privacy Focused**: Keeps user data secure and isolated
 - 🐳 **Docker Ready**: Easy deployment with Docker
 
 ## Prerequisites
@@ -167,6 +168,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Changelog
 
+- **v2.1.0**: Full migration to **Kurigram Bot API 10.2 UI** — Native Rich Messages (`send_rich_message`), interactive HTML `<table>` layouts, collapsible `<details>` walkthroughs, `ButtonStyle` inline buttons, streaming drafts (`send_rich_message_draft`) for real-time progress, and ephemeral feedback toasts.
 - **v2.0.0**: Added Telethon session generation via /gen → inline button choice; state-machine flow (conversation-lite) replaces telethon's Conversation API; cancel button, code-expiry handling, client cleanup on every exit path; kurigram/pyrogram bot
 - **v1.0.0**: Initial release with Pyrogram session generation
 
