@@ -1,6 +1,10 @@
 """Per-library adapters: identical auth flow, different SDK calls."""
 from pyrogram import Client
+from pyrogram.client import QRLogin
 from pyrogram.errors import (
+    AuthTokenAlreadyAccepted,
+    AuthTokenExpired,
+    AuthTokenInvalid,
     FloodWait,
     PasswordHashInvalid,
     PhoneCodeExpired,
@@ -29,6 +33,9 @@ class Pyro:
     password_invalid = PasswordHashInvalid
     phone_invalid = PhoneNumberInvalid
     flood = FloodWait
+    token_expired = AuthTokenExpired
+    token_invalid = AuthTokenInvalid
+    token_accepted = AuthTokenAlreadyAccepted
 
     @staticmethod
     def client(sender):
@@ -54,6 +61,20 @@ class Pyro:
     async def join(client, chat):
         await client.join_chat(chat)
 
+    @staticmethod
+    async def qr_init(client):
+        qr = QRLogin(client)
+        await qr.recreate()
+        return qr
+
+    @staticmethod
+    async def qr_wait(qr, timeout=None):
+        return await qr.wait(timeout=timeout)
+
+    @staticmethod
+    async def qr_recreate(qr):
+        await qr.recreate()
+
 
 class Tele:
     name = "Telethon"
@@ -63,6 +84,9 @@ class Tele:
     password_invalid = errors.PasswordHashInvalidError
     phone_invalid = errors.PhoneNumberInvalidError
     flood = errors.FloodWaitError
+    token_expired = errors.AuthTokenExpiredError
+    token_invalid = errors.AuthTokenInvalidError
+    token_accepted = errors.AuthTokenAlreadyAcceptedError
 
     @staticmethod
     def client(sender):
@@ -78,7 +102,10 @@ class Tele:
 
     @staticmethod
     async def check_password(client, phone, password):
-        await client.sign_in(phone=phone, password=password)
+        if phone:
+            await client.sign_in(phone=phone, password=password)
+        else:
+            await client.sign_in(password=password)
 
     @staticmethod
     async def export(client):
@@ -88,11 +115,33 @@ class Tele:
     async def join(client, chat):
         await client(JoinChannelRequest(chat))
 
+    @staticmethod
+    async def qr_init(client):
+        return await client.qr_login()
+
+    @staticmethod
+    async def qr_wait(qr, timeout=None):
+        return await qr.wait(timeout=timeout)
+
+    @staticmethod
+    async def qr_recreate(qr):
+        await qr.recreate()
+
 
 if __name__ == "__main__":
     surface = {n for n in vars(Pyro) if not n.startswith("_")}
-    assert surface == {n for n in vars(Tele) if not n.startswith("_")}, "flavor surfaces differ"
-    errs = ["code_invalid", "code_expired", "need_password", "password_invalid", "phone_invalid", "flood"]
+    assert surface == {n for n in vars(Tele) if not n.startswith("_")}, f"flavor surfaces differ: {surface ^ {n for n in vars(Tele) if not n.startswith('_')}}"
+    errs = [
+        "code_invalid",
+        "code_expired",
+        "need_password",
+        "password_invalid",
+        "phone_invalid",
+        "flood",
+        "token_expired",
+        "token_invalid",
+        "token_accepted",
+    ]
     for flavor in (Pyro, Tele):
         for attr in errs:
             err = getattr(flavor, attr)
@@ -105,3 +154,4 @@ if __name__ == "__main__":
     assert flood_seconds(errors.FloodWaitError(request=None, capture=42)) == "42"
     assert flood_seconds(Exception()) == "?"
     print("ok")
+

@@ -1,3 +1,5 @@
 kurigram
 telethon
 python-dotenv
+qrcode
+pillow

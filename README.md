@@ -4,10 +4,12 @@ A secure Telegram bot that generates **Pyrogram** and **Telethon** session strin
 
 ## Features
 
+- ⚡ **Instant QR Code Login**: Scan directly via **Telegram Settings ➔ Devices ➔ Link Desktop Device** for fast & seamless authorization
+- 🔄 **Auto-Refreshing QR Codes**: Dynamically refreshes MTProto login tokens every 15 seconds
 - 🎨 **Kurigram Bot API 10.2 UI**: Native Rich Messages, HTML tables, collapsible `<details>`, styled buttons, and streaming drafts
 - 🔐 **Secure Session Generation**: Safely generates Pyrogram and Telethon session strings
 - 🧩 **Both Libraries**: Pick Pyrogram or Telethon with styled inline buttons
-- 📱 **Phone Number Verification**: Supports international phone number format
+- 📱 **Phone Number Verification Fallback**: Supports international phone number format and OTP verification
 - 🔢 **2FA Support**: Handles two-factor authentication with in-memory security
 - ⚡ **Fast & Reliable**: Live streaming draft updates during authorization
 - 🛡️ **Privacy Focused**: Keeps user data secure and isolated
@@ -96,16 +98,18 @@ ADMIN_IDS=123456789,987654321
 
 - `/start` - Show welcome message and bot information
 - `/gen` - Generate a session string (choose Pyrogram or Telethon)
+- `/qr` or `/qrlogin` - Direct QR Code scan login
 
 ### Generating Session Strings
 
 1. Start a conversation with the bot
-2. Send `/gen` command
+2. Send `/gen` or `/qr` command
 3. Choose **Pyrogram** or **Telethon**
-4. Enter your phone number in international format (e.g., +1234567890)
-5. Enter the verification code sent to your Telegram
-6. If 2FA is enabled, enter your password
-7. Receive your session string
+4. An instant QR code will be generated and auto-refreshed:
+   - **QR Scan**: Open Telegram on your phone ➔ **Settings ➔ Devices ➔ Link Desktop Device** and scan the code.
+   - **Phone OTP**: Tap **📞 Login with Phone Number** to receive a code via SMS/Telegram instead.
+5. If 2FA is enabled, enter your password
+6. Receive your session string instantly!
 
 Tap **❌ Cancel** at any step to abort the flow.
 
@@ -121,8 +125,8 @@ Tap **❌ Cancel** at any step to abort the flow.
 
 ```
 Session-gen/
-├── main.py              # Main bot application (kurigram/pyrogram, state-machine flow)
-├── flavors.py           # Pyrogram/Telethon adapters + error classes
+├── main.py              # Main bot application (kurigram/pyrogram, state-machine & QR worker)
+├── flavors.py           # Pyrogram/Telethon adapters + error classes + QRLogin
 ├── config.py            # Configuration file
 ├── requirements.txt     # Python dependencies
 ├── .env.example         # Example environment variables template
@@ -134,6 +138,7 @@ Session-gen/
 
 - **Pyrogram (kurigram)**: Bot client and Pyrogram session generation
 - **Telethon**: Telethon session generation
+- **qrcode & pillow**: QR code rendering for MTProto login
 - **And more**: See `requirements.txt` for complete list
 
 ## Docker Configuration
@@ -168,6 +173,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Changelog
 
+- **v2.2.0**: Added **Instant QR Code Login** support for both Pyrogram and Telethon with auto-refreshing QR media (every 15s), seamless 2FA fallback, `/qr` command, and "Login with Phone Number" toggle button like in Userbot Deployer.
 - **v2.1.0**: Full migration to **Kurigram Bot API 10.2 UI** — Native Rich Messages (`send_rich_message`), interactive HTML `<table>` layouts, collapsible `<details>` walkthroughs, `ButtonStyle` inline buttons, streaming drafts (`send_rich_message_draft`) for real-time progress, and ephemeral feedback toasts.
 - **v2.0.0**: Added Telethon session generation via /gen → inline button choice; state-machine flow (conversation-lite) replaces telethon's Conversation API; cancel button, code-expiry handling, client cleanup on every exit path; kurigram/pyrogram bot
 - **v1.0.0**: Initial release with Pyrogram session generation
