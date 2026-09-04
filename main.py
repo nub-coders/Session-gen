@@ -2,6 +2,7 @@
 import asyncio
 import io
 import logging
+import time
 
 import qrcode
 from pyrogram import Client, filters
@@ -91,7 +92,7 @@ def _qr_caption(flavor_name: str) -> str:
         "1. Open <b>Telegram</b> on your phone\n"
         "2. Go to <b>Settings ➔ Devices ➔ Link Desktop Device</b>\n"
         "3. Scan the QR code above\n\n"
-        "🔄 <i>Auto-refreshes every 15 seconds.</i>"
+        "⏱ <i>Expires in 2 minutes (auto-refreshes every 15s).</i>"
     )
 
 
@@ -286,13 +287,23 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
                     log.debug("QR refresh error: %s", re_err)
 
         refresher_task = asyncio.create_task(_refresher())
+        deadline = time.time() + 120
+        user_logged_in = False
 
         try:
-            try:
-                await flavor.qr_wait(qr)
-            except (asyncio.TimeoutError, flavor.token_expired):
-                await flavor.qr_recreate(qr)
-                await flavor.qr_wait(qr)
+            while time.time() < deadline:
+                remaining = max(1.0, deadline - time.time())
+                try:
+                    await asyncio.wait_for(flavor.qr_wait(qr), timeout=remaining)
+                    user_logged_in = True
+                    break
+                except (asyncio.TimeoutError, flavor.token_expired):
+                    if time.time() >= deadline:
+                        break
+                    try:
+                        await flavor.qr_recreate(qr)
+                    except Exception:
+                        pass
         except flavor.need_password:
             refresh_running = False
             refresher_task.cancel()
@@ -357,11 +368,32 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
             )
             await _drop(user_id)
             return
+        finally:
+            refresh_running = False
+            refresher_task.cancel()
 
-        refresh_running = False
-        refresher_task.cancel()
+        if not user_logged_in:
+            # Timed out after 120 seconds
+            active_qr_tasks.pop(user_id, None)
+            try:
+                await photo_msg.delete()
+            except Exception:
+                pass
+            await _send_rich(
+                chat_id,
+                "<h2>⏳ QR Login Timed Out</h2>\n"
+                "<blockquote>The QR code session expired after 2 minutes of inactivity.</blockquote>\n\n"
+                "<p>Please click below to start a new session when you are ready to scan.</p>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Try Again", callback_data=f"gen_qr:{flavor_tag}", style=S.PRIMARY)],
+                    [InlineKeyboardButton("📞 Login with Phone", callback_data=f"gen_phone:{flavor_tag}", style=S.DEFAULT)],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="gen_cancel", style=S.DANGER)],
+                ]),
+            )
+            await _drop(user_id)
+            return
+
         active_qr_tasks.pop(user_id, None)
-
         try:
             await photo_msg.delete()
         except Exception:
