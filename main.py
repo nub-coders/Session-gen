@@ -8,7 +8,7 @@ import time
 import qrcode
 from pyrogram import Client, filters
 from pyrogram.enums import ButtonStyle as S, ParseMode
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, FloodWait
 from pyrogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -18,7 +18,8 @@ from pyrogram.types import (
     Message,
 )
 
-from config import API_ID, API_HASH, BOT_TOKEN, GROUP, CHANNEL
+from config import API_ID, API_HASH, BOT_TOKEN, GROUP, CHANNEL, ADMIN_IDS
+from database import save_user, get_all_users, get_users_count
 from flavors import Pyro, Tele, flood_seconds
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -30,6 +31,11 @@ bot = Client("sessionbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN
 states: dict[int, dict] = {}
 # Active QR background worker tasks; keyed by user id.
 active_qr_tasks: dict[int, dict] = {}
+
+
+def is_admin(user_id: int) -> bool:
+    """Check if the user is in ADMIN_IDS."""
+    return bool(ADMIN_IDS and user_id in ADMIN_IDS)
 
 
 # ── UI Helpers ──
@@ -851,12 +857,14 @@ async def _finish_session(chat_id: int | str, user_id: int, status_msg_id: int, 
             ],
         ]),
     )
+    asyncio.create_task(save_user(user_id))
 
 
 # ── Static handlers ──
 
 @bot.on_message(filters.command("gen") & filters.private)
 async def start_gen(_, message: Message):
+    asyncio.create_task(save_user(message.from_user.id))
     await _drop(message.from_user.id)
     await _send_rich(
         message.chat.id,
@@ -867,6 +875,7 @@ async def start_gen(_, message: Message):
 
 @bot.on_message(filters.command(["qr", "qrlogin"]) & filters.private)
 async def start_qr_command(_, message: Message):
+    asyncio.create_task(save_user(message.from_user.id))
     await _drop(message.from_user.id)
     args = message.command[1:] if len(message.command) > 1 else []
     if args and args[0].lower() in ("tele", "telethon"):
@@ -899,6 +908,7 @@ async def start_qr_command(_, message: Message):
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(_, message: Message):
+    asyncio.create_task(save_user(message.from_user.id))
     await _send_rich(
         message.chat.id,
         "<h1>🤖 Session String Generator</h1>\n"
@@ -940,6 +950,136 @@ async def start_handler(_, message: Message):
                 InlineKeyboardButton("🤖 Our Bots", url="https://t.me/+FbIuEWrOYlEwYzM1", style=S.PRIMARY),
             ],
         ]),
+    )
+
+
+# ── Broadcast & Admin Commands (OTPBOT parity) ──
+
+@bot.on_callback_query(filters.regex(r"^broadcast_help$"))
+async def cb_broadcast_help(_, cq: CallbackQuery):
+    if not is_admin(cq.from_user.id):
+        await cq.answer("⛔ Admin only.", show_alert=True)
+        return
+    await _edit(
+        cq.message,
+        "📢 <b>Broadcast Message</b>\n\n"
+        "Reply to any message with:\n\n"
+        "• <code>/broadcast</code> — copies message to all users (no sender shown)\n"
+        "• <code>/broadcast -name</code> — forwards message (original sender visible)\n\n"
+        "Or send directly:\n"
+        "• <code>/broadcast &lt;message text&gt;</code>\n\n"
+        "📌 Must be used as a <b>reply</b> or with direct text.",
+    )
+
+
+@bot.on_message(filters.command(["broadcast", "bcast"]) & filters.private)
+async def cmd_broadcast(_, message: Message):
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Admin only command.")
+        return
+
+    target = message.reply_to_message
+    args = message.text.split(None, 1)
+    flag_or_text = args[1].strip() if len(args) > 1 else ""
+
+    if not target and not flag_or_text:
+        await message.reply(
+            "❌ <b>Reply to a message</b> to broadcast it, or provide text.\n\n"
+            "<blockquote>"
+            "• <code>/broadcast</code> — copies replied message (no sender shown)\n"
+            "• <code>/broadcast -name</code> — forwards replied message (sender visible)\n"
+            "• <code>/broadcast &lt;message&gt;</code> — direct text broadcast to all users"
+            "</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    include_name = flag_or_text.lower() == "-name"
+    if flag_or_text and target and not include_name:
+        await message.reply(
+            "❌ Unknown flag. Use <code>/broadcast</code> or <code>/broadcast -name</code>.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    direct_text = None
+    if not target:
+        direct_text = flag_or_text
+
+    users = await get_all_users()
+    if not users:
+        await message.reply("⚠️ No users found in database to broadcast to.")
+        return
+
+    status_msg = await message.reply(
+        f"⏳ Broadcasting to {len(users)} users...",
+        parse_mode=ParseMode.HTML,
+    )
+
+    sent = 0
+    failed = 0
+    total = len(users)
+
+    for idx, uid in enumerate(users, start=1):
+        try:
+            if target:
+                if include_name:
+                    await target.forward(uid)
+                else:
+                    await target.copy(uid)
+            else:
+                await bot.send_message(uid, direct_text, parse_mode=ParseMode.HTML)
+            sent += 1
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                if target:
+                    if include_name:
+                        await target.forward(uid)
+                    else:
+                        await target.copy(uid)
+                else:
+                    await bot.send_message(uid, direct_text, parse_mode=ParseMode.HTML)
+                sent += 1
+            except Exception:
+                failed += 1
+        except Exception:
+            failed += 1
+
+        # Periodic status updates every 25 users
+        if idx % 25 == 0:
+            pct = (idx / total * 100) if total else 0
+            await _edit(
+                status_msg,
+                f"⏳ <b>Broadcasting to {total} users...</b>\n\n"
+                f"• Progress: <code>{idx}/{total}</code> ({pct:.1f}%)\n"
+                f"• Sent: <b>{sent}</b> • Failed: <b>{failed}</b>",
+            )
+
+        await asyncio.sleep(0.05)  # ~20 msg/s, within Telegram limits
+
+    await _edit(
+        status_msg,
+        f"📢 <b>Broadcast Complete!</b>\n\n"
+        f"• <b>Total Targeted:</b> <code>{total}</code>\n"
+        f"• <b>Successfully Sent:</b> <code>{sent}</code>\n"
+        f"• <b>Failed / Blocked:</b> <code>{failed}</code>",
+    )
+
+
+@bot.on_message(filters.command(["stats", "users"]) & filters.private)
+async def cmd_stats(_, message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    count = await get_users_count()
+    await _send_rich(
+        message.chat.id,
+        f"<h2>📊 Session-Gen Statistics</h2>\n"
+        f"<table border=\"1\">\n"
+        f"  <tr><td><b>Metric</b></td><td><b>Value</b></td></tr>\n"
+        f"  <tr><td>👥 Registered Users</td><td><code>{count}</code></td></tr>\n"
+        f"</table>\n\n"
+        f"<blockquote>Use <code>/broadcast</code> to send announcements to all users.</blockquote>",
     )
 
 

@@ -4,4 +4,8 @@ python-dotenv
 qrcode
 pillow
 tgcrypto
+pymongo
+certifi
+dnspython
+
 
