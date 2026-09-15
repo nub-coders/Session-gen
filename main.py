@@ -2,6 +2,7 @@
 import asyncio
 import io
 import logging
+import re
 import time
 
 import qrcode
@@ -47,30 +48,39 @@ async def _send_rich(
 
 
 async def _edit(
-    message: Message,
+    target: Message | tuple[int | str, int],
     rich_html: str,
     reply_markup: InlineKeyboardMarkup | None = None,
-):
+) -> Message | None:
     """Edit an existing message using native Rich HTML."""
+    if isinstance(target, Message):
+        chat_id = target.chat.id
+        message_id = target.id
+    else:
+        chat_id, message_id = target
+
     try:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=message.id,
+        return await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
             rich_message=InputRichMessage(html=rich_html),
             reply_markup=reply_markup,
         )
     except MessageNotModified:
-        pass
+        return None
+    except Exception as e:
+        log.warning("Failed to edit message %s in chat %s: %s", message_id, chat_id, e)
+        try:
+            return await _send_rich(chat_id, rich_html, reply_markup=reply_markup)
+        except Exception:
+            return None
 
 
-async def _draft(chat_id: int | str, draft_id: int, rich_html: str):
-    """Stream a live rich draft update to the user."""
+async def _delete_msg(chat_id: int | str, message_id: int | None):
+    if not message_id:
+        return
     try:
-        await bot.send_rich_message_draft(
-            chat_id=chat_id,
-            draft_id=draft_id,
-            rich_message=InputRichMessage(html=rich_html),
-        )
+        await bot.delete_messages(chat_id=chat_id, message_ids=message_id)
     except Exception:
         pass
 
@@ -111,10 +121,10 @@ async def _cancel_qr_task(user_id: int):
         if task and not task.done():
             task.cancel()
         client = entry.get("client")
+        flavor = entry.get("flavor", Pyro)
         if client:
             try:
-                if getattr(client, "is_connected", False):
-                    await client.disconnect()
+                await flavor.disconnect(client)
             except Exception:
                 pass
 
@@ -125,20 +135,20 @@ async def _drop(user_id: int):
     state = states.pop(user_id, None)
     if state and state.get("client"):
         try:
-            if getattr(state["client"], "is_connected", False):
-                await state["client"].disconnect()
+            flavor = state.get("flavor", Pyro)
+            await flavor.disconnect(state["client"])
         except Exception:
             pass
 
 
-async def _fail(user_id: int, status: Message, rich_html: str, reply_markup: InlineKeyboardMarkup | None = None):
+async def _fail(user_id: int, chat_id: int | str, status_msg_id: int, rich_html: str, reply_markup: InlineKeyboardMarkup | None = None):
     """Clean up state and display a formatted failure rich message."""
     await _drop(user_id)
     if reply_markup is None:
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Try Again", callback_data="gen_start", style=S.PRIMARY)]
         ])
-    await _edit(status, rich_html, reply_markup=reply_markup)
+    await _edit((chat_id, status_msg_id), rich_html, reply_markup=reply_markup)
 
 
 def _back_kb() -> InlineKeyboardMarkup:
@@ -244,7 +254,7 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
     except Exception as e:
         log.exception("Failed to send QR photo to %s: %s", user_id, e)
         try:
-            await client.disconnect()
+            await flavor.disconnect(client)
         except Exception:
             pass
         await _send_rich(
@@ -314,15 +324,7 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
             except Exception:
                 pass
 
-            states[user_id] = {
-                "step": "password",
-                "flavor": flavor,
-                "flavor_tag": flavor_tag,
-                "client": client,
-                "phone": None,
-            }
-
-            await _send_rich(
+            pwd_msg = await _send_rich(
                 chat_id,
                 "<h2>🔐 Two-Factor Authentication Required</h2>\n"
                 "<p>This Telegram account is protected with a <b>2FA Cloud Password</b>.</p>\n"
@@ -343,6 +345,15 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
                 "<blockquote>Please enter your 2FA password below:</blockquote>",
                 reply_markup=_back_kb(),
             )
+
+            states[user_id] = {
+                "step": "password",
+                "flavor": flavor,
+                "flavor_tag": flavor_tag,
+                "client": client,
+                "phone": None,
+                "status_msg_id": pwd_msg.id,
+            }
             return
         except asyncio.CancelledError:
             refresh_running = False
@@ -400,12 +411,15 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
             pass
 
         status = await _send_rich(chat_id, f"<h3>⏳ Finalizing {flavor.name} session authorization...</h3>")
-        await _finish_session(chat_id, user_id, status, states.get(user_id, {"flavor": flavor, "client": client}))
+        state_dict = states.get(user_id, {"flavor": flavor, "client": client})
+        state_dict["status_msg_id"] = status.id
+        await _finish_session(chat_id, user_id, status.id, state_dict)
 
     worker_task = asyncio.create_task(_worker())
     active_qr_tasks[user_id] = {
         "task": worker_task,
         "client": client,
+        "flavor": flavor,
     }
 
 
@@ -414,7 +428,6 @@ async def _start_qr_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: s
 async def _start_phone_flow(chat_id: int | str, user_id: int, flavor, flavor_tag: str, old_message: Message | None = None):
     """Switch to manual phone OTP login flow."""
     await _drop(user_id)
-    states[user_id] = {"step": "phone", "flavor": flavor, "flavor_tag": flavor_tag}
 
     phone_html = (
         f"<h2>📱 {flavor.name} Phone Setup</h2>\n"
@@ -451,7 +464,13 @@ async def _start_phone_flow(chat_id: int | str, user_id: int, flavor, flavor_tag
         except Exception:
             pass
 
-    await _send_rich(chat_id, phone_html, reply_markup=markup)
+    prompt_msg = await _send_rich(chat_id, phone_html, reply_markup=markup)
+    states[user_id] = {
+        "step": "phone",
+        "flavor": flavor,
+        "flavor_tag": flavor_tag,
+        "prompt_msg_id": prompt_msg.id,
+    }
 
 
 # ── Flow callbacks & handlers ──
@@ -524,39 +543,50 @@ async def on_text(_, message: Message):
         await _handle_password(message, text, state)
 
 
-async def _handle_phone(message: Message, phone: str, state: dict):
-    if not phone.startswith("+"):
-        phone = "+" + phone
+async def _handle_phone(message: Message, phone_input: str, state: dict):
     flavor = state["flavor"]
     user_id = message.from_user.id
+    chat_id = message.chat.id
 
-    if not 5 <= len(phone) <= 18:
-        await _send_rich(
-            message.chat.id,
+    # Clean previous prompt message if present
+    prompt_msg_id = state.get("prompt_msg_id")
+    if prompt_msg_id:
+        await _delete_msg(chat_id, prompt_msg_id)
+
+    # Normalize phone number (strip whitespace, dashes, parentheses)
+    digits = re.sub(r"\D", "", phone_input)
+    phone = f"+{digits}"
+
+    if not 6 <= len(digits) <= 16:
+        err_msg = await _send_rich(
+            chat_id,
             "<h2>❌ Invalid Phone Number</h2>\n"
-            "<blockquote>Please send your phone number in international format with country code (e.g. <code>+1234567890</code>).</blockquote>",
+            "<blockquote>Please send your full phone number with country code (e.g. <code>+1234567890</code>).</blockquote>",
             reply_markup=_back_kb(),
         )
+        state["prompt_msg_id"] = err_msg.id
         return
 
-    draft_id = bot.rnd_id()
-    await _draft(message.chat.id, draft_id, "<h3>⏳ Connecting to Telegram servers...</h3>")
-
     status = await _send_rich(
-        message.chat.id,
+        chat_id,
         f"<h3>⏳ Requesting verification code for <code>{phone}</code>...</h3>",
     )
+    status_id = status.id
+    state["status_msg_id"] = status_id
 
     try:
-        # Stash the client before connecting so any failure below still gets it disconnected.
         state["client"] = client = flavor.client(user_id)
         await client.connect()
-        await _draft(message.chat.id, draft_id, f"<h3>📨 Sending code to <code>{phone}</code>...</h3>")
         phone_code_hash = await flavor.send_code(client, phone)
-        state.update({"step": "code", "phone": phone, "phone_code_hash": phone_code_hash})
+        state.update({
+            "step": "code",
+            "phone": phone,
+            "phone_code_hash": phone_code_hash,
+            "status_msg_id": status_id,
+        })
 
         await _edit(
-            status,
+            (chat_id, status_id),
             f"<h2>✅ Verification Code Sent</h2>\n"
             f"<p>An official authorization code has been sent to your Telegram app for <code>{phone}</code>.</p>\n"
             "<table border=\"1\">\n"
@@ -583,7 +613,8 @@ async def _handle_phone(message: Message, phone: str, state: dict):
     except flavor.phone_invalid:
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>❌ Invalid Phone Number</h2>\n"
             "<blockquote>The phone number entered is not valid or not registered on Telegram.</blockquote>",
         )
@@ -591,7 +622,8 @@ async def _handle_phone(message: Message, phone: str, state: dict):
         secs = flood_seconds(e)
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>⚠️ Rate Limited</h2>\n"
             f"<blockquote>Too many attempts. Telegram requires you to wait <b>{secs}</b> seconds before trying again.</blockquote>",
         )
@@ -599,28 +631,42 @@ async def _handle_phone(message: Message, phone: str, state: dict):
         log.exception("phone step failed for %s", user_id)
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>❌ Connection Error</h2>\n"
             f"<blockquote>Failed to request verification code:<br/><code>{e}</code></blockquote>",
         )
 
 
-async def _handle_code(message: Message, code: str, state: dict):
+async def _handle_code(message: Message, code_input: str, state: dict):
     flavor = state["flavor"]
     user_id = message.from_user.id
-    clean_code = code.replace(" ", "").replace(".", "").replace("-", "")
+    chat_id = message.chat.id
+    status_id = state.get("status_msg_id")
 
-    draft_id = bot.rnd_id()
-    await _draft(message.chat.id, draft_id, "<h3>⏳ Verifying authorization code...</h3>")
+    # Delete incoming code message for security
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
-    status = await _send_rich(message.chat.id, "<h3>⏳ Verifying authorization code...</h3>")
+    clean_code = re.sub(r"\D", "", code_input)
+    if not clean_code:
+        clean_code = code_input.strip()
+
+    if status_id:
+        await _edit((chat_id, status_id), "<h3>⏳ Verifying authorization code...</h3>")
+    else:
+        status = await _send_rich(chat_id, "<h3>⏳ Verifying authorization code...</h3>")
+        status_id = status.id
+        state["status_msg_id"] = status_id
 
     try:
         await flavor.sign_in(state["client"], state["phone"], state["phone_code_hash"], clean_code)
     except flavor.need_password:
         state["step"] = "password"
         await _edit(
-            status,
+            (chat_id, status_id),
             "<h2>🔐 Two-Factor Authentication Required</h2>\n"
             "<p>This Telegram account is protected with a <b>2FA Cloud Password</b>.</p>\n"
             "<table border=\"1\">\n"
@@ -647,7 +693,7 @@ async def _handle_code(message: Message, code: str, state: dict):
         return
     except flavor.code_invalid:
         await _edit(
-            status,
+            (chat_id, status_id),
             "<h2>❌ Invalid Verification Code</h2>\n"
             "<blockquote>The code you entered is incorrect. Please try again (e.g. <code>1 2 3 4 5</code>):</blockquote>",
             reply_markup=_back_kb(),
@@ -656,76 +702,110 @@ async def _handle_code(message: Message, code: str, state: dict):
     except flavor.code_expired:
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>❌ Verification Code Expired</h2>\n"
             "<blockquote>The verification code has expired. Please start again.</blockquote>",
+        )
+        return
+    except flavor.flood as e:
+        secs = flood_seconds(e)
+        await _fail(
+            user_id,
+            chat_id,
+            status_id,
+            "<h2>⚠️ Rate Limited</h2>\n"
+            f"<blockquote>Too many attempts. Telegram requires you to wait <b>{secs}</b> seconds before trying again.</blockquote>",
         )
         return
     except Exception as e:
         log.exception("code step failed for %s", user_id)
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>❌ Verification Error</h2>\n"
             f"<blockquote>An error occurred during verification:<br/><code>{e}</code></blockquote>",
         )
         return
 
-    await _finish_session(message.chat.id, user_id, status, state)
+    await _finish_session(chat_id, user_id, status_id, state)
 
 
 async def _handle_password(message: Message, password: str, state: dict):
     flavor = state["flavor"]
     user_id = message.from_user.id
+    chat_id = message.chat.id
+    status_id = state.get("status_msg_id")
 
-    draft_id = bot.rnd_id()
-    await _draft(message.chat.id, draft_id, "<h3>⏳ Verifying 2FA password...</h3>")
+    # Delete incoming password message for security
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
-    status = await _send_rich(message.chat.id, "<h3>⏳ Verifying 2FA password...</h3>")
+    if status_id:
+        await _edit((chat_id, status_id), "<h3>⏳ Verifying 2FA password...</h3>")
+    else:
+        status = await _send_rich(chat_id, "<h3>⏳ Verifying 2FA password...</h3>")
+        status_id = status.id
+        state["status_msg_id"] = status_id
 
     try:
         await flavor.check_password(state["client"], state.get("phone"), password.strip())
     except flavor.password_invalid:
         await _edit(
-            status,
+            (chat_id, status_id),
             "<h2>❌ Incorrect 2FA Password</h2>\n"
             "<blockquote>The 2FA password entered is incorrect. Please try again:</blockquote>",
             reply_markup=_back_kb(),
+        )
+        return
+    except flavor.flood as e:
+        secs = flood_seconds(e)
+        await _fail(
+            user_id,
+            chat_id,
+            status_id,
+            "<h2>⚠️ Rate Limited</h2>\n"
+            f"<blockquote>Too many attempts. Telegram requires you to wait <b>{secs}</b> seconds before trying again.</blockquote>",
         )
         return
     except Exception as e:
         log.exception("password step failed for %s", user_id)
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_id,
             "<h2>❌ Password Verification Error</h2>\n"
             f"<blockquote>An error occurred during password verification:<br/><code>{e}</code></blockquote>",
         )
         return
 
-    await _finish_session(message.chat.id, user_id, status, state)
+    await _finish_session(chat_id, user_id, status_id, state)
 
 
-async def _finish_session(chat_id: int | str, user_id: int, status: Message, state: dict):
+async def _finish_session(chat_id: int | str, user_id: int, status_msg_id: int, state: dict):
     """Finalize authorization, join broadcast channels, and present the generated string session."""
     flavor = state["flavor"]
     client = state["client"]
-    draft_id = bot.rnd_id()
+
+    await _edit((chat_id, status_msg_id), f"<h3>⏳ Finalizing {flavor.name} session authorization...</h3>")
 
     try:
-        await _draft(chat_id, draft_id, "<h3>⏳ Finalizing session authorization...</h3>")
         for chat in (GROUP, CHANNEL):
-            try:
-                await flavor.join(client, chat)
-            except Exception:
-                pass
-        await _draft(chat_id, draft_id, f"<h3>⚡ Exporting {flavor.name} session string...</h3>")
+            if chat:
+                try:
+                    await flavor.join(client, chat)
+                except Exception:
+                    pass
         string_session = await flavor.export(client)
     except Exception as e:
         log.exception("session export failed for %s", user_id)
         await _fail(
             user_id,
-            status,
+            chat_id,
+            status_msg_id,
             "<h2>❌ Export Error</h2>\n"
             f"<blockquote>Failed to export string session:<br/><code>{e}</code></blockquote>",
         )
@@ -735,9 +815,9 @@ async def _finish_session(chat_id: int | str, user_id: int, status: Message, sta
 
     me = await bot.get_me()
     await _edit(
-        status,
+        (chat_id, status_msg_id),
         f"<h1>🎉 Session Generated Successfully!</h1>\n"
-        f"<p>Here is your <b>{flavor.name}</b> session string:</p>\n"
+        f"<p>Here is your <b>{flavor.name}</b> session string (tap to copy):</p>\n"
         "<table border=\"1\">\n"
         "  <tr>\n"
         "    <td><b>Framework</b></td>\n"
@@ -752,15 +832,15 @@ async def _finish_session(chat_id: int | str, user_id: int, status: Message, sta
         f"    <td>@{me.username}</td>\n"
         "  </tr>\n"
         "</table>\n\n"
-        "<h2>🔑 String Session</h2>\n"
-        f"<pre><code>{string_session}</code></pre>\n\n"
+        "<h3>🔑 String Session:</h3>\n"
+        f"<code>{string_session}</code>\n\n"
         "<details>\n"
         "  <summary>🛡️ Critical Security Instructions</summary>\n"
         "  <p>• <b>Confidential:</b> Anyone with this string can access your Telegram account.<br/>\n"
         "  • <b>Revocation:</b> You can terminate this active session anytime via <b>Telegram Settings → Devices</b>.<br/>\n"
         "  • <b>Best Practice:</b> Never paste this string into public chats or insecure scripts.</p>\n"
         "</details>\n\n"
-        "<blockquote>⚠️ <b>Important:</b> Keep this string session private and secure!</blockquote>",
+        "<p>⚠️ <b>Important:</b> Keep this string session private and secure!</p>",
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("Support Group 💭", url=f"https://t.me/{GROUP}", style=S.DEFAULT),
@@ -777,7 +857,7 @@ async def _finish_session(chat_id: int | str, user_id: int, status: Message, sta
 
 @bot.on_message(filters.command("gen") & filters.private)
 async def start_gen(_, message: Message):
-    await _drop(message.from_user.id)  # restarting mid-flow must not leak old tasks/clients
+    await _drop(message.from_user.id)
     await _send_rich(
         message.chat.id,
         _choice_html(),

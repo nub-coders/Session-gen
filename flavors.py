@@ -62,6 +62,11 @@ class Pyro:
         await client.join_chat(chat)
 
     @staticmethod
+    async def disconnect(client):
+        if client and getattr(client, "is_connected", False):
+            await client.disconnect()
+
+    @staticmethod
     async def qr_init(client):
         qr = QRLogin(client)
         await qr.recreate()
@@ -114,6 +119,11 @@ class Tele:
     @staticmethod
     async def join(client, chat):
         await client(JoinChannelRequest(chat))
+
+    @staticmethod
+    async def disconnect(client):
+        if client and client.is_connected():
+            await client.disconnect()
 
     @staticmethod
     async def qr_init(client):
